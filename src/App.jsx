@@ -700,7 +700,7 @@ const App = () => {
               </div>
             </div>
           </div>
-        {/* end dashboard */}
+        )} {/* end dashboard */}
       </div>
     </div>
   );
