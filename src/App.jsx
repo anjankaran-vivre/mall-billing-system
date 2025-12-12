@@ -626,4 +626,84 @@ const App = () => {
           <div>
             {/* Stats Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-              <div className
+              <div className="bg-white rounded-lg shadow p-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm text-gray-500">Total Products</h3>
+                  <p className="text-2xl font-bold">{totalProducts}</p>
+                </div>
+                <Package className="w-8 h-8 text-blue-600" />
+              </div>
+              <div className="bg-white rounded-lg shadow p-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm text-gray-500">Total Stock</h3>
+                  <p className="text-2xl font-bold">{totalStock}</p>
+                </div>
+                <BarChart3 className="w-8 h-8 text-green-600" />
+              </div>
+              <div className="bg-white rounded-lg shadow p-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm text-gray-500">Today's Sales</h3>
+                  <p className="text-2xl font-bold">₹{todaySales}</p>
+                </div>
+                <TrendingUp className="w-8 h-8 text-yellow-500" />
+              </div>
+              <div className="bg-white rounded-lg shadow p-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm text-gray-500">Bills</h3>
+                  <p className="text-2xl font-bold">{bills.length}</p>
+                </div>
+                <ShoppingCart className="w-8 h-8 text-indigo-600" />
+              </div>
+            </div>
+
+            {/* Recent Bills & Actions */}
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold">Recent Bills</h2>
+                <div className="flex gap-2">
+                  <button onClick={() => {
+                    const data = JSON.stringify(bills, null, 2);
+                    const blob = new Blob([data], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url; a.download = 'bills.json';
+                    a.click(); URL.revokeObjectURL(url);
+                  }} className="px-3 py-2 bg-gray-100 rounded hover:bg-gray-200 flex items-center gap-1"><Save className="w-4 h-4"/> Save</button>
+                  <button onClick={() => {
+                    // download CSV
+                    if (!bills.length) return;
+                    const rows = bills.map(b => [b.id, b.date, b.total, b.items.map(i => `${i.code}(${i.quantity})`).join(';')]);
+                    const csv = ['ID,Date,Total,Items', ...rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n');
+                    const blob = new Blob([csv], { type: 'text/csv' });
+                    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'bills.csv'; a.click(); URL.revokeObjectURL(url);
+                  }} className="px-3 py-2 bg-gray-100 rounded hover:bg-gray-200 flex items-center gap-1"><Download className="w-4 h-4"/> Download</button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {bills.length === 0 ? (
+                  <p className="text-gray-500">No bills yet — create a bill from the Billing tab.</p>
+                ) : (
+                  bills.map(b => (
+                    <div key={b.id} className="border rounded p-3 flex justify-between items-center">
+                      <div>
+                        <div className="font-medium">{b.id}</div>
+                        <div className="text-sm text-gray-500">{b.date}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-bold">₹{b.total}</div>
+                        <div className="text-xs text-gray-500">{b.items.length} items</div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        {/* end dashboard */}
+      </div>
+    </div>
+  );
+}
+
+export default App;
