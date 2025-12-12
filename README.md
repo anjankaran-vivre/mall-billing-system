@@ -15,6 +15,15 @@ npm install
 npm run dev
 ```
 
+If `node` or `npm` are not installed, install Node.js LTS on Windows using `winget` or the Node.js website:
+
+```powershell
+# via Windows package manager (winget)
+winget install -e --id OpenJS.NodeJS.LTS
+
+# or download installer: https://nodejs.org/en/download/
+```
+
 ### Environment variables
 
 Vite reads `.env` files automatically during development and build. Create a `.env` in the project root (it is already added to `.gitignore`) or copy `.env.example` and edit values:
@@ -31,6 +40,24 @@ Build for production:
 ```bash
 npm run build
 npm run preview
+```
+
+### Run inside Docker (no local Node required)
+
+If you don't want to install Node locally, you can run the project inside Docker. You need Docker Desktop (or Docker Engine) installed.
+
+```bash
+# Start the dev environment (maps port 5173)
+docker compose up --build
+```
+
+- The container uses the local `.env` file (if present) via `docker-compose.yml`.
+- Open http://localhost:5173 in your browser.
+
+On Windows you can use the helper script:
+
+```powershell
+.\scripts\run-dev.ps1
 ```
 
 ## GitHub: push repository
