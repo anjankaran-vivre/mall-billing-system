@@ -8,4 +8,3 @@ dotenv.config()
 export default defineConfig({
   plugins: [react()],
 })
-```
