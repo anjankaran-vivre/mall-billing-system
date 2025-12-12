@@ -8,6 +8,8 @@ dotenv.config();
 export default defineConfig({
   plugins: [react()],
 })
+// NOTE: Vite loads .env files into `import.meta.env` automatically for the client.
+// The `dotenv` import above is only used if you need to access env vars here in the vite config.
 ```
 
 ---
