@@ -200,13 +200,19 @@ const App = () => {
     new Date(b.date).toDateString() === new Date().toDateString()
   ).reduce((sum, b) => sum + b.total, 0);
 
+  const APP_TITLE = import.meta.env.VITE_APP_TITLE || 'Mall Billing & Stock Management';
+  const API_URL = import.meta.env.VITE_API_URL || '';
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-blue-600 text-white p-4 shadow-lg">
         <div className="max-w-7xl mx-auto">
-          <h1 className="text-2xl font-bold">Mall Billing & Stock Management</h1>
+          <h1 className="text-2xl font-bold">{APP_TITLE}</h1>
           <p className="text-blue-100 text-sm">QR Code Based System</p>
+          {API_URL && (
+            <p className="text-blue-100 text-xs mt-1">API: {API_URL}</p>
+          )}
         </div>
       </div>
 

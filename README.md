@@ -15,6 +15,17 @@ npm install
 npm run dev
 ```
 
+### Environment variables
+
+Vite reads `.env` files automatically during development and build. Create a `.env` in the project root (it is already added to `.gitignore`) or copy `.env.example` and edit values:
+
+```bash
+cp .env.example .env
+# or create .env and set VITE_APP_TITLE, VITE_API_URL
+```
+
+Client-side environment variables in Vite require the `VITE_` prefix. For example, `VITE_APP_TITLE` will be available under `import.meta.env.VITE_APP_TITLE` in the app.
+
 Build for production:
 
 ```bash
