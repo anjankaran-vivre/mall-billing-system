@@ -1,0 +1,65 @@
+# Mall Billing System
+
+> Simple Vite + React frontend for mall billing, barcode/QR scanning, and stock management (demo data).
+
+## Quick checks
+- `package.json` has `dev`, `build`, and `preview` scripts (Vite).
+- `vite.config.js` includes `@vitejs/plugin-react`.
+
+## Local run
+
+Install dependencies and run dev server:
+
+```bash
+npm install
+npm run dev
+```
+
+Build for production:
+
+```bash
+npm run build
+npm run preview
+```
+
+## GitHub: push repository
+
+1. Initialize git and commit:
+
+```bash
+git init
+git add .
+git commit -m "Initial commit - Mall Billing System"
+```
+
+2. Create a GitHub repo (via GitHub website) and add remote, then push:
+
+```bash
+git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
+git branch -M main
+git push -u origin main
+```
+
+## Deploy to Vercel
+
+Option A — Connect GitHub repo (recommended):
+- Go to https://vercel.com, sign in, choose "Import Project" → select your GitHub repo.
+- Framework: `Vite` (Auto-detected). Build command: `npm run build`. Output directory: `dist`.
+- Deploy.
+
+Option B — Vercel CLI:
+
+```bash
+npm i -g vercel
+vercel login
+vercel --prod
+```
+
+Notes:
+- If using environment variables, add them in Vercel Project Settings.
+- Tailwind is loaded via CDN in `index.html`; if you later switch to Tailwind JIT, add config files.
+
+## Next recommended steps
+- Initialize git locally and push to GitHub (see commands above).
+- Link the GitHub repo on Vercel and deploy.
+- (Optional) Add tests and backend for persistent data.
