@@ -35,6 +35,40 @@ cp .env.example .env
 
 Client-side environment variables in Vite require the `VITE_` prefix. For example, `VITE_APP_TITLE` will be available under `import.meta.env.VITE_APP_TITLE` in the app.
 
+If you want Google Sheets integration you can provide a backend API and set `VITE_SHEETS_API` to its base URL. The app expects the following endpoints (JSON):
+
+- `GET /products` — list of products
+- `GET /product/:code` — single product by code
+- `POST /product` — add product
+- `PATCH /product/:code` — update product fields
+- `POST /stock/adjust/:code` — adjust stock with `{ change: number }`
+- `POST /bill` — create a bill
+- `GET /bills` — list of bills
+
+The app works in demo mode (localStorage) if `VITE_SHEETS_API` is not set.
+If you already have a Google Apps Script web app URL (like the one you provided), set `VITE_SHEETS_API` to that URL. Example `.env` entry:
+
+```env
+VITE_SHEETS_API=https://script.google.com/macros/s/AKfycbzySmLhJDe2eNQpvtlQtJDSwiZMRk9Zmr8_sA8eSW84qE76FEcH-JGI3-UhbgetPlXt-w/exec
+```
+
+The client auto-detects Apps Script URLs and will use query `action=` parameters when calling endpoints, for example:
+- GET VITE_SHEETS_API?action=products
+- GET VITE_SHEETS_API?action=product&code=P001
+- POST VITE_SHEETS_API?action=bill
+
+Testing the script manually in a browser (GET) or using `curl` for POSTs is a good way to verify it's working before setting it in `.env`:
+
+```bash
+# Get products
+curl "https://script.google.com/macros/s/AKfy.../exec?action=products"
+
+# Add a product (POST)
+curl -X POST -H "Content-Type: application/json" \
+	-d '{"code":"P010","name":"Sample","category":"Misc","price":10,"stock":5,"minStock":2}' \
+	"https://script.google.com/macros/s/AKfy.../exec?action=product"
+```
+
 Build for production:
 
 ```bash

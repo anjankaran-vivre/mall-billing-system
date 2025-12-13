@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ShoppingCart, Package, TrendingUp, TrendingDown, BarChart3, Search, Plus, Minus, Trash2, Camera, X, Check, AlertTriangle, Save, Download, Upload } from 'lucide-react';
+import { getProducts, getProductByCode, addProduct as apiAddProduct, adjustStock, updateStock, createBill, getBills, updateProduct } from './api/sheets';
+import BarcodeInput from './components/BarcodeInput';
 
 const App = () => {
   const [activeTab, setActiveTab] = useState('billing');
@@ -10,6 +12,7 @@ const App = () => {
   const [showScanner, setShowScanner] = useState(false);
   const [notification, setNotification] = useState(null);
   const [lowStockItems, setLowStockItems] = useState([]);
+  const [customer, setCustomer] = useState({ name: '', phone: '' });
   
   // Form states
   const [newProduct, setNewProduct] = useState({
@@ -28,9 +31,30 @@ const App = () => {
     reason: ''
   });
 
+  const [editingProductCode, setEditingProductCode] = useState(null);
+  const [editingProduct, setEditingProduct] = useState({});
+
   // Load demo data on mount
   useEffect(() => {
-    loadDemoData();
+      // try to load from API or localStorage fallback
+      (async () => {
+        const apiProducts = await (async () => {
+          try { return await getProducts(); } catch (e) { return null; }
+        })();
+
+        const apiBills = await (async () => {
+          try { return await getBills(); } catch (e) { return null; }
+        })();
+
+        if (apiProducts && Array.isArray(apiProducts)) {
+          setProducts(apiProducts);
+          showNotification('Products loaded from external source', 'success');
+        } else {
+          loadDemoData();
+        }
+
+        if (apiBills && Array.isArray(apiBills)) setBills(apiBills);
+      })();
   }, []);
 
   // Check for low stock
@@ -51,6 +75,8 @@ const App = () => {
       { code: 'P008', name: 'Toothpaste', category: 'Personal Care', price: 50, stock: 60, minStock: 15 },
     ];
     setProducts(demoProducts);
+    try { localStorage.setItem('products', JSON.stringify(demoProducts)); } catch (e) {}
+    try { localStorage.setItem('bills', JSON.stringify([])); } catch (e) {}
     showNotification('Demo data loaded successfully!', 'success');
   };
 
@@ -103,9 +129,13 @@ const App = () => {
     setCart(cart.filter(item => item.code !== code));
   };
 
-  const completeBill = () => {
+  const completeBill = async () => {
     if (cart.length === 0) {
       showNotification('Cart is empty!', 'error');
+      return;
+    }
+    if (!customer.name || !customer.phone) {
+      showNotification('Enter customer name and phone before billing', 'error');
       return;
     }
 
@@ -116,16 +146,29 @@ const App = () => {
       total: cart.reduce((sum, item) => sum + (item.price * item.quantity), 0)
     };
 
-    // Update stock
-    const updatedProducts = products.map(product => {
-      const cartItem = cart.find(item => item.code === product.code);
-      if (cartItem) {
-        return { ...product, stock: product.stock - cartItem.quantity };
+    // Persist bill and update stock via API or fallback
+    const newBill = { ...bill, customer };
+    try {
+      await createBill(newBill);
+      // reload products from API if available; fallback to local updates
+      try {
+        const updated = await getProducts();
+        if (updated) setProducts(updated);
+      } catch (e) {
+        // Best-effort, reduce stock locally
+        const updatedProducts = products.map(product => {
+          const cartItem = cart.find(item => item.code === product.code);
+          if (cartItem) {
+            return { ...product, stock: product.stock - cartItem.quantity };
+          }
+          return product;
+        });
+        setProducts(updatedProducts);
       }
-      return product;
-    });
-
-    setProducts(updatedProducts);
+    } catch (e) {
+      showNotification('Failed to save bill to external store', 'error');
+      return;
+    }
     setBills([bill, ...bills]);
     setCart([]);
     showNotification('Bill completed successfully!', 'success');
@@ -134,7 +177,7 @@ const App = () => {
   };
 
   // Stock management
-  const handleStockOperation = (e) => {
+  const handleStockOperation = async (e) => {
     e.preventDefault();
     const product = products.find(p => p.code === stockForm.productCode);
     
@@ -148,24 +191,35 @@ const App = () => {
       showNotification('Invalid quantity!', 'error');
       return;
     }
+    // Try to update via API/Sheets, fallback to local update
+    try {
+      if (stockForm.type === 'in') await adjustStock(stockForm.productCode, qty);
+      else await adjustStock(stockForm.productCode, -qty);
 
-    const updatedProducts = products.map(p => {
-      if (p.code === stockForm.productCode) {
-        const newStock = stockForm.type === 'in' 
-          ? p.stock + qty 
-          : Math.max(0, p.stock - qty);
-        return { ...p, stock: newStock };
+      try {
+        const all = await getProducts();
+        if (all) setProducts(all);
+      } catch (e) {
+        // Best-effort local update
+        const updatedProducts = products.map(p => {
+          if (p.code === stockForm.productCode) {
+            const newStock = stockForm.type === 'in' ? p.stock + qty : Math.max(0, p.stock - qty);
+            return { ...p, stock: newStock };
+          }
+          return p;
+        });
+        setProducts(updatedProducts);
       }
-      return p;
-    });
 
-    setProducts(updatedProducts);
-    showNotification(`Stock ${stockForm.type === 'in' ? 'added' : 'removed'} successfully!`, 'success');
-    setStockForm({ productCode: '', quantity: '', type: 'in', reason: '' });
+      showNotification(`Stock ${stockForm.type === 'in' ? 'added' : 'removed'} successfully!`, 'success');
+      setStockForm({ productCode: '', quantity: '', type: 'in', reason: '' });
+    } catch (err) {
+      showNotification('Failed to update stock on remote store', 'error');
+    }
   };
 
   // Product management
-  const addProduct = (e) => {
+  const addProduct = async (e) => {
     e.preventDefault();
     
     if (products.find(p => p.code === newProduct.code)) {
@@ -182,9 +236,54 @@ const App = () => {
       minStock: parseInt(newProduct.minStock)
     };
 
-    setProducts([...products, product]);
-    showNotification('Product added successfully!', 'success');
-    setNewProduct({ code: '', name: '', category: '', price: '', stock: '', minStock: '' });
+    try {
+      await apiAddProduct(product);
+      const all = await getProducts();
+      if (all && Array.isArray(all)) setProducts(all);
+      else setProducts([...products, product]);
+      showNotification('Product added successfully!', 'success');
+      setNewProduct({ code: '', name: '', category: '', price: '', stock: '', minStock: '' });
+    } catch (e) {
+      // fallback local add
+      setProducts([...products, product]);
+      showNotification('Product added locally (API unavailable)', 'info');
+      setNewProduct({ code: '', name: '', category: '', price: '', stock: '', minStock: '' });
+    }
+  };
+
+  const startEditProduct = (product) => {
+    setEditingProductCode(product.code);
+    setEditingProduct({ ...product });
+  };
+
+  const cancelEditProduct = () => {
+    setEditingProductCode(null);
+    setEditingProduct({});
+  };
+
+  const saveEditProduct = async (e) => {
+    e.preventDefault();
+    if (!editingProductCode) return;
+    const payload = {
+      name: editingProduct.name,
+      category: editingProduct.category,
+      price: parseFloat(editingProduct.price),
+      stock: parseInt(editingProduct.stock),
+      minStock: parseInt(editingProduct.minStock)
+    };
+    try {
+      await updateProduct(editingProductCode, payload);
+      const all = await getProducts();
+      if (all && Array.isArray(all)) setProducts(all);
+      cancelEditProduct();
+      showNotification('Product updated successfully!', 'success');
+    } catch (e) {
+      // fallback local update
+      const updatedProducts = products.map(p => p.code === editingProductCode ? { ...p, ...payload } : p);
+      setProducts(updatedProducts);
+      cancelEditProduct();
+      showNotification('Product updated locally (API unavailable)', 'info');
+    }
   };
 
   const filteredProducts = products.filter(p =>
@@ -202,6 +301,8 @@ const App = () => {
 
   const APP_TITLE = import.meta.env.VITE_APP_TITLE || 'Mall Billing & Stock Management';
   const API_URL = import.meta.env.VITE_API_URL || '';
+  const SHEETS_API = import.meta.env.VITE_SHEETS_API || '';
+  const [testingSheets, setTestingSheets] = useState(false);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -212,6 +313,25 @@ const App = () => {
           <p className="text-blue-100 text-sm">QR Code Based System</p>
           {API_URL && (
             <p className="text-blue-100 text-xs mt-1">API: {API_URL}</p>
+          )}
+          {SHEETS_API && (
+            <div className="flex items-center gap-2 mt-1">
+              <p className="text-blue-100 text-xs">Sheets: {SHEETS_API}</p>
+              <button
+                onClick={async () => {
+                  setTestingSheets(true);
+                  try {
+                    const products = await getProducts();
+                    if (Array.isArray(products)) showNotification(`Sheets OK — ${products.length} products`, 'success');
+                    else showNotification('Sheets returned unexpected response', 'error');
+                  } catch (err) {
+                    showNotification(`Sheets test failed: ${err.message}`, 'error');
+                  } finally { setTestingSheets(false); }
+                }}
+                disabled={testingSheets}
+                className="ml-2 px-2 py-1 bg-white text-blue-600 rounded text-xs"
+              >{testingSheets ? 'Testing...' : 'Test Sheets'}</button>
+            </div>
           )}
         </div>
       </div>
@@ -294,6 +414,25 @@ const App = () => {
                 </button>
               </div>
 
+              {showScanner && (
+                <div className="mb-4">
+                  <label className="block text-sm text-gray-500 mb-1">Scan/Enter product code</label>
+                  <BarcodeInput onScan={async (code) => {
+                    try {
+                      const remote = await getProductByCode(code);
+                      if (remote) addToCart(remote);
+                      else {
+                        const found = products.find(p => p.code === code || p.name === code);
+                        if (found) addToCart(found);
+                        else showNotification('Product not found', 'error');
+                      }
+                    } catch (e) {
+                      showNotification('Failed to fetch product', 'error');
+                    }
+                  }} />
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[600px] overflow-y-auto">
                 {filteredProducts.map(product => (
                   <div
@@ -329,6 +468,13 @@ const App = () => {
                 <ShoppingCart className="w-6 h-6" />
                 Cart
               </h2>
+
+              <div className="mb-3">
+                <label className="block text-xs text-gray-500">Customer Name</label>
+                <input value={customer.name} onChange={(e) => setCustomer({...customer, name: e.target.value})} className="w-full px-3 py-2 border rounded mt-1" placeholder="Customer name" />
+                <label className="block text-xs text-gray-500 mt-2">Phone</label>
+                <input value={customer.phone} onChange={(e) => setCustomer({...customer, phone: e.target.value})} className="w-full px-3 py-2 border rounded mt-1" placeholder="Phone number" />
+              </div>
 
               {cart.length === 0 ? (
                 <p className="text-gray-500 text-center py-8">Cart is empty</p>
@@ -600,20 +746,43 @@ const App = () => {
               <div className="space-y-2 max-h-[600px] overflow-y-auto">
                 {products.map(product => (
                   <div key={product.code} className="border rounded-lg p-3 hover:shadow-md transition">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="font-semibold">{product.name}</h3>
-                        <p className="text-sm text-gray-500">{product.code} - {product.category}</p>
-                      </div>
-                      <span className="text-lg font-bold text-blue-600">₹{product.price}</span>
-                    </div>
-                    <div className="flex justify-between items-center mt-2">
-                      <span className={`text-sm font-medium ${
-                        product.stock <= product.minStock ? 'text-red-600' : 'text-green-600'
-                      }`}>
-                        Stock: {product.stock} (Min: {product.minStock})
-                      </span>
-                    </div>
+                    {editingProductCode === product.code ? (
+                      <form onSubmit={saveEditProduct} className="space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          <input value={editingProduct.name} onChange={(e) => setEditingProduct({...editingProduct, name: e.target.value})} className="px-2 py-1 border rounded" />
+                          <input value={editingProduct.category} onChange={(e) => setEditingProduct({...editingProduct, category: e.target.value})} className="px-2 py-1 border rounded" />
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <input type="number" value={editingProduct.price} onChange={(e) => setEditingProduct({...editingProduct, price: e.target.value})} className="px-2 py-1 border rounded" />
+                          <input type="number" value={editingProduct.stock} onChange={(e) => setEditingProduct({...editingProduct, stock: e.target.value})} className="px-2 py-1 border rounded" />
+                          <input type="number" value={editingProduct.minStock} onChange={(e) => setEditingProduct({...editingProduct, minStock: e.target.value})} className="px-2 py-1 border rounded" />
+                        </div>
+                        <div className="flex gap-2">
+                          <button type="submit" className="px-3 py-1 bg-green-600 text-white rounded">Save</button>
+                          <button type="button" onClick={cancelEditProduct} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h3 className="font-semibold">{product.name}</h3>
+                            <p className="text-sm text-gray-500">{product.code} - {product.category}</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg font-bold text-blue-600">₹{product.price}</span>
+                            <button onClick={() => startEditProduct(product)} className="px-2 py-1 bg-yellow-100 rounded text-sm">Edit</button>
+                          </div>
+                        </div>
+                        <div className="flex justify-between items-center mt-2">
+                          <span className={`text-sm font-medium ${
+                            product.stock <= product.minStock ? 'text-red-600' : 'text-green-600'
+                          }`}>
+                            Stock: {product.stock} (Min: {product.minStock})
+                          </span>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
@@ -699,6 +868,24 @@ const App = () => {
                 )}
               </div>
             </div>
+            {lowStockItems.length > 0 && (
+              <div className="bg-white rounded-lg shadow-md p-6 mt-4">
+                <h3 className="text-lg font-bold mb-3">Low Stock Items</h3>
+                <div className="space-y-2">
+                  {lowStockItems.map(item => (
+                    <div key={item.code} className="flex justify-between items-center border p-2 rounded">
+                      <div>
+                        <div className="font-medium">{item.name} ({item.code})</div>
+                        <div className="text-sm text-gray-500">Stock: {item.stock} (Min: {item.minStock})</div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={() => { setActiveTab('stockIn'); setStockForm({ ...stockForm, productCode: item.code, quantity: '' }); }} className="px-3 py-2 bg-blue-600 text-white rounded">Reorder</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )} {/* end dashboard */}
       </div>
