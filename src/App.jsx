@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingCart, Package, TrendingUp, TrendingDown, BarChart3, Search, Plus, Minus, Trash2, Camera, X, Check, AlertTriangle, Save, Download, Upload } from 'lucide-react';
+import { ShoppingCart, Package, TrendingUp, TrendingDown, BarChart3, Search, Plus, Minus, Trash2, Camera, X, Check, AlertTriangle, Save, Download, Upload, RefreshCw, Loader } from 'lucide-react';
 import { getProducts, getProductByCode, addProduct as apiAddProduct, adjustStock, updateStock, createBill, getBills, updateProduct } from './api/sheets';
 import BarcodeInput from './components/BarcodeInput';
 
@@ -13,6 +13,10 @@ const App = () => {
   const [notification, setNotification] = useState(null);
   const [lowStockItems, setLowStockItems] = useState([]);
   const [customer, setCustomer] = useState({ name: '', phone: '' });
+  
+  // Loading and Error states
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   
   // Form states
   const [newProduct, setNewProduct] = useState({
@@ -34,27 +38,55 @@ const App = () => {
   const [editingProductCode, setEditingProductCode] = useState(null);
   const [editingProduct, setEditingProduct] = useState({});
 
-  // Load demo data on mount
-  useEffect(() => {
-      // try to load from API or localStorage fallback
-      (async () => {
-        const apiProducts = await (async () => {
-          try { return await getProducts(); } catch (e) { return null; }
-        })();
+  const APP_TITLE = import.meta.env.VITE_APP_TITLE || 'Mall Billing & Stock Management';
+  const SHEETS_API = import.meta.env.VITE_SHEETS_API || '';
+  const [testingSheets, setTestingSheets] = useState(false);
 
-        const apiBills = await (async () => {
-          try { return await getBills(); } catch (e) { return null; }
-        })();
+  // Load data from Google Sheets ONLY
+  const loadData = async () => {
+    setLoading(true);
+    setError(null);
 
-        if (apiProducts && Array.isArray(apiProducts)) {
-          setProducts(apiProducts);
-          showNotification('Products loaded from external source', 'success');
-        } else {
-          loadDemoData();
+    // Check if API is configured
+    if (!SHEETS_API) {
+      setError('Google Sheets API not configured. Please set VITE_SHEETS_API environment variable.');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      // Load Products from Google Sheets
+      const apiProducts = await getProducts();
+      
+      if (apiProducts && Array.isArray(apiProducts)) {
+        setProducts(apiProducts);
+        showNotification(`Loaded ${apiProducts.length} products from Google Sheets`, 'success');
+      } else {
+        throw new Error('Invalid response from Google Sheets');
+      }
+
+      // Load Bills from Google Sheets
+      try {
+        const apiBills = await getBills();
+        if (apiBills && Array.isArray(apiBills)) {
+          setBills(apiBills);
         }
+      } catch (billError) {
+        console.warn('Could not load bills:', billError);
+      }
 
-        if (apiBills && Array.isArray(apiBills)) setBills(apiBills);
-      })();
+    } catch (err) {
+      console.error('Failed to load data:', err);
+      setError(`Failed to load data from Google Sheets: ${err.message}`);
+      showNotification('Failed to connect to Google Sheets', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Load data on mount
+  useEffect(() => {
+    loadData();
   }, []);
 
   // Check for low stock
@@ -63,26 +95,14 @@ const App = () => {
     setLowStockItems(low);
   }, [products]);
 
-  const loadDemoData = () => {
-    const demoProducts = [
-      { code: 'P001', name: 'Rice 1kg', category: 'Grocery', price: 50, stock: 100, minStock: 20 },
-      { code: 'P002', name: 'Cooking Oil 1L', category: 'Grocery', price: 120, stock: 50, minStock: 15 },
-      { code: 'P003', name: 'Sugar 1kg', category: 'Grocery', price: 45, stock: 80, minStock: 20 },
-      { code: 'P004', name: 'Tea Powder 250g', category: 'Beverage', price: 180, stock: 30, minStock: 10 },
-      { code: 'P005', name: 'Wheat Flour 1kg', category: 'Grocery', price: 40, stock: 15, minStock: 25 },
-      { code: 'P006', name: 'Detergent 1kg', category: 'Household', price: 150, stock: 40, minStock: 10 },
-      { code: 'P007', name: 'Shampoo 200ml', category: 'Personal Care', price: 200, stock: 25, minStock: 10 },
-      { code: 'P008', name: 'Toothpaste', category: 'Personal Care', price: 50, stock: 60, minStock: 15 },
-    ];
-    setProducts(demoProducts);
-    try { localStorage.setItem('products', JSON.stringify(demoProducts)); } catch (e) {}
-    try { localStorage.setItem('bills', JSON.stringify([])); } catch (e) {}
-    showNotification('Demo data loaded successfully!', 'success');
-  };
-
   const showNotification = (message, type = 'info') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
+  };
+
+  // Refresh data from Google Sheets
+  const refreshData = async () => {
+    await loadData();
   };
 
   // Billing functions
@@ -143,37 +163,33 @@ const App = () => {
       id: `BILL${Date.now()}`,
       date: new Date().toLocaleString(),
       items: [...cart],
-      total: cart.reduce((sum, item) => sum + (item.price * item.quantity), 0)
+      total: cart.reduce((sum, item) => sum + (item.price * item.quantity), 0),
+      customer
     };
 
-    // Persist bill and update stock via API or fallback
-    const newBill = { ...bill, customer };
     try {
-      await createBill(newBill);
-      // reload products from API if available; fallback to local updates
-      try {
-        const updated = await getProducts();
-        if (updated) setProducts(updated);
-      } catch (e) {
-        // Best-effort, reduce stock locally
-        const updatedProducts = products.map(product => {
-          const cartItem = cart.find(item => item.code === product.code);
-          if (cartItem) {
-            return { ...product, stock: product.stock - cartItem.quantity };
-          }
-          return product;
-        });
-        setProducts(updatedProducts);
+      await createBill(bill);
+      
+      // Reload products from Google Sheets to get updated stock
+      const updated = await getProducts();
+      if (updated && Array.isArray(updated)) {
+        setProducts(updated);
       }
+      
+      // Reload bills
+      const updatedBills = await getBills();
+      if (updatedBills && Array.isArray(updatedBills)) {
+        setBills(updatedBills);
+      } else {
+        setBills([bill, ...bills]);
+      }
+      
+      setCart([]);
+      setCustomer({ name: '', phone: '' });
+      showNotification('Bill completed successfully!', 'success');
     } catch (e) {
-      showNotification('Failed to save bill to external store', 'error');
-      return;
+      showNotification(`Failed to save bill: ${e.message}`, 'error');
     }
-    setBills([bill, ...bills]);
-    setCart([]);
-    showNotification('Bill completed successfully!', 'success');
-    
-    // In real app, save to Google Sheets here
   };
 
   // Stock management
@@ -191,30 +207,21 @@ const App = () => {
       showNotification('Invalid quantity!', 'error');
       return;
     }
-    // Try to update via API/Sheets, fallback to local update
-    try {
-      if (stockForm.type === 'in') await adjustStock(stockForm.productCode, qty);
-      else await adjustStock(stockForm.productCode, -qty);
 
-      try {
-        const all = await getProducts();
-        if (all) setProducts(all);
-      } catch (e) {
-        // Best-effort local update
-        const updatedProducts = products.map(p => {
-          if (p.code === stockForm.productCode) {
-            const newStock = stockForm.type === 'in' ? p.stock + qty : Math.max(0, p.stock - qty);
-            return { ...p, stock: newStock };
-          }
-          return p;
-        });
-        setProducts(updatedProducts);
+    try {
+      const change = stockForm.type === 'in' ? qty : -qty;
+      await adjustStock(stockForm.productCode, change);
+
+      // Reload products from Google Sheets
+      const updated = await getProducts();
+      if (updated && Array.isArray(updated)) {
+        setProducts(updated);
       }
 
       showNotification(`Stock ${stockForm.type === 'in' ? 'added' : 'removed'} successfully!`, 'success');
       setStockForm({ productCode: '', quantity: '', type: 'in', reason: '' });
     } catch (err) {
-      showNotification('Failed to update stock on remote store', 'error');
+      showNotification(`Failed to update stock: ${err.message}`, 'error');
     }
   };
 
@@ -238,16 +245,17 @@ const App = () => {
 
     try {
       await apiAddProduct(product);
-      const all = await getProducts();
-      if (all && Array.isArray(all)) setProducts(all);
-      else setProducts([...products, product]);
+      
+      // Reload products from Google Sheets
+      const updated = await getProducts();
+      if (updated && Array.isArray(updated)) {
+        setProducts(updated);
+      }
+      
       showNotification('Product added successfully!', 'success');
       setNewProduct({ code: '', name: '', category: '', price: '', stock: '', minStock: '' });
     } catch (e) {
-      // fallback local add
-      setProducts([...products, product]);
-      showNotification('Product added locally (API unavailable)', 'info');
-      setNewProduct({ code: '', name: '', category: '', price: '', stock: '', minStock: '' });
+      showNotification(`Failed to add product: ${e.message}`, 'error');
     }
   };
 
@@ -264,6 +272,7 @@ const App = () => {
   const saveEditProduct = async (e) => {
     e.preventDefault();
     if (!editingProductCode) return;
+    
     const payload = {
       name: editingProduct.name,
       category: editingProduct.category,
@@ -271,68 +280,99 @@ const App = () => {
       stock: parseInt(editingProduct.stock),
       minStock: parseInt(editingProduct.minStock)
     };
+    
     try {
       await updateProduct(editingProductCode, payload);
-      const all = await getProducts();
-      if (all && Array.isArray(all)) setProducts(all);
+      
+      // Reload products from Google Sheets
+      const updated = await getProducts();
+      if (updated && Array.isArray(updated)) {
+        setProducts(updated);
+      }
+      
       cancelEditProduct();
       showNotification('Product updated successfully!', 'success');
     } catch (e) {
-      // fallback local update
-      const updatedProducts = products.map(p => p.code === editingProductCode ? { ...p, ...payload } : p);
-      setProducts(updatedProducts);
-      cancelEditProduct();
-      showNotification('Product updated locally (API unavailable)', 'info');
+      showNotification(`Failed to update product: ${e.message}`, 'error');
     }
   };
 
   const filteredProducts = products.filter(p =>
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.category.toLowerCase().includes(searchTerm.toLowerCase())
+    p.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.category?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const totalStock = products.reduce((sum, p) => sum + p.stock, 0);
+  const totalStock = products.reduce((sum, p) => sum + (p.stock || 0), 0);
   const totalProducts = products.length;
   const todaySales = bills.filter(b => 
     new Date(b.date).toDateString() === new Date().toDateString()
-  ).reduce((sum, b) => sum + b.total, 0);
+  ).reduce((sum, b) => sum + (b.total || 0), 0);
 
-  const APP_TITLE = import.meta.env.VITE_APP_TITLE || 'Mall Billing & Stock Management';
-  const API_URL = import.meta.env.VITE_API_URL || '';
-  const SHEETS_API = import.meta.env.VITE_SHEETS_API || '';
-  const [testingSheets, setTestingSheets] = useState(false);
+  // ==================== LOADING STATE ====================
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <Loader className="w-12 h-12 text-blue-600 animate-spin mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-700">Loading from Google Sheets...</h2>
+          <p className="text-gray-500 mt-2">Please wait while we fetch your data</p>
+        </div>
+      </div>
+    );
+  }
 
+  // ==================== ERROR STATE ====================
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full text-center">
+          <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">Connection Error</h2>
+          <p className="text-gray-600 mb-6">{error}</p>
+          
+          <div className="space-y-3">
+            <button
+              onClick={refreshData}
+              className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 font-semibold flex items-center justify-center gap-2"
+            >
+              <RefreshCw className="w-5 h-5" />
+              Retry Connection
+            </button>
+            
+            <div className="text-left bg-gray-50 rounded-lg p-4 text-sm">
+              <p className="font-semibold mb-2">Checklist:</p>
+              <ul className="space-y-1 text-gray-600">
+                <li>✓ Set <code className="bg-gray-200 px-1 rounded">VITE_SHEETS_API</code> in Vercel</li>
+                <li>✓ Deploy Google Apps Script as Web App</li>
+                <li>✓ Set access to "Anyone"</li>
+                <li>✓ Redeploy after adding env variable</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ==================== MAIN APP ====================
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-blue-600 text-white p-4 shadow-lg">
-        <div className="max-w-7xl mx-auto">
-          <h1 className="text-2xl font-bold">{APP_TITLE}</h1>
-          <p className="text-blue-100 text-sm">QR Code Based System</p>
-          {API_URL && (
-            <p className="text-blue-100 text-xs mt-1">API: {API_URL}</p>
-          )}
-          {SHEETS_API && (
-            <div className="flex items-center gap-2 mt-1">
-              <p className="text-blue-100 text-xs">Sheets: {SHEETS_API}</p>
-              <button
-                onClick={async () => {
-                  setTestingSheets(true);
-                  try {
-                    const products = await getProducts();
-                    if (Array.isArray(products)) showNotification(`Sheets OK — ${products.length} products`, 'success');
-                    else showNotification('Sheets returned unexpected response', 'error');
-                  } catch (err) {
-                    showNotification(`Sheets test failed: ${err.message}`, 'error');
-                  } finally { setTestingSheets(false); }
-                }}
-                disabled={testingSheets}
-                className="ml-2 px-2 py-1 bg-white text-blue-600 rounded text-xs"
-              >{testingSheets ? 'Testing...' : 'Test Sheets'}</button>
-            </div>
-          )}
+        <div className="max-w-7xl mx-auto flex justify-between items-start">
+          <div>
+            <h1 className="text-2xl font-bold">{APP_TITLE}</h1>
+            <p className="text-blue-100 text-sm">Connected to Google Sheets</p>
+          </div>
+          <button
+            onClick={refreshData}
+            className="px-3 py-2 bg-blue-500 hover:bg-blue-400 rounded-lg flex items-center gap-2 text-sm"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
         </div>
       </div>
 
@@ -362,7 +402,7 @@ const App = () => {
       {/* Navigation Tabs */}
       <div className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto">
-          <div className="flex space-x-1 p-2">
+          <div className="flex space-x-1 p-2 overflow-x-auto">
             {[
               { id: 'billing', label: 'Billing', icon: ShoppingCart },
               { id: 'stockIn', label: 'Stock In', icon: TrendingUp },
@@ -373,7 +413,7 @@ const App = () => {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition ${
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition whitespace-nowrap ${
                   activeTab === tab.id
                     ? 'bg-blue-600 text-white'
                     : 'text-gray-600 hover:bg-gray-100'
@@ -389,8 +429,24 @@ const App = () => {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto p-4">
+        
+        {/* Empty State - No Products */}
+        {products.length === 0 && activeTab !== 'products' && (
+          <div className="bg-white rounded-lg shadow-md p-8 text-center">
+            <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <h2 className="text-xl font-semibold text-gray-700 mb-2">No Products Found</h2>
+            <p className="text-gray-500 mb-4">Add products in Google Sheets or use the Products tab</p>
+            <button
+              onClick={() => setActiveTab('products')}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Add Products
+            </button>
+          </div>
+        )}
+
         {/* Billing Tab */}
-        {activeTab === 'billing' && (
+        {activeTab === 'billing' && products.length > 0 && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Products List */}
             <div className="lg:col-span-2 bg-white rounded-lg shadow-md p-4">
@@ -410,7 +466,7 @@ const App = () => {
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
                 >
                   <Camera className="w-5 h-5" />
-                  Scan QR
+                  Scan
                 </button>
               </div>
 
@@ -420,8 +476,9 @@ const App = () => {
                   <BarcodeInput onScan={async (code) => {
                     try {
                       const remote = await getProductByCode(code);
-                      if (remote) addToCart(remote);
-                      else {
+                      if (remote && remote.code) {
+                        addToCart(remote);
+                      } else {
                         const found = products.find(p => p.code === code || p.name === code);
                         if (found) addToCart(found);
                         else showNotification('Product not found', 'error');
@@ -466,21 +523,31 @@ const App = () => {
             <div className="bg-white rounded-lg shadow-md p-4">
               <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
                 <ShoppingCart className="w-6 h-6" />
-                Cart
+                Cart ({cart.length})
               </h2>
 
               <div className="mb-3">
-                <label className="block text-xs text-gray-500">Customer Name</label>
-                <input value={customer.name} onChange={(e) => setCustomer({...customer, name: e.target.value})} className="w-full px-3 py-2 border rounded mt-1" placeholder="Customer name" />
-                <label className="block text-xs text-gray-500 mt-2">Phone</label>
-                <input value={customer.phone} onChange={(e) => setCustomer({...customer, phone: e.target.value})} className="w-full px-3 py-2 border rounded mt-1" placeholder="Phone number" />
+                <label className="block text-xs text-gray-500">Customer Name *</label>
+                <input 
+                  value={customer.name} 
+                  onChange={(e) => setCustomer({...customer, name: e.target.value})} 
+                  className="w-full px-3 py-2 border rounded mt-1" 
+                  placeholder="Customer name" 
+                />
+                <label className="block text-xs text-gray-500 mt-2">Phone *</label>
+                <input 
+                  value={customer.phone} 
+                  onChange={(e) => setCustomer({...customer, phone: e.target.value})} 
+                  className="w-full px-3 py-2 border rounded mt-1" 
+                  placeholder="Phone number" 
+                />
               </div>
 
               {cart.length === 0 ? (
                 <p className="text-gray-500 text-center py-8">Cart is empty</p>
               ) : (
                 <>
-                  <div className="space-y-2 max-h-[400px] overflow-y-auto mb-4">
+                  <div className="space-y-2 max-h-[300px] overflow-y-auto mb-4">
                     {cart.map(item => (
                       <div key={item.code} className="border rounded-lg p-3">
                         <div className="flex justify-between items-start mb-2">
@@ -545,7 +612,7 @@ const App = () => {
             </h2>
             <form onSubmit={handleStockOperation} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium mb-2">Product Code / Name</label>
+                <label className="block text-sm font-medium mb-2">Product Code</label>
                 <input
                   type="text"
                   value={stockForm.productCode}
@@ -603,7 +670,7 @@ const App = () => {
             </h2>
             <form onSubmit={handleStockOperation} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium mb-2">Product Code / Name</label>
+                <label className="block text-sm font-medium mb-2">Product Code</label>
                 <input
                   type="text"
                   value={stockForm.productCode}
@@ -633,7 +700,7 @@ const App = () => {
                   value={stockForm.reason}
                   onChange={(e) => setStockForm({...stockForm, reason: e.target.value})}
                   className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-red-500"
-                  placeholder="e.g., Damaged, Expired, Returned to supplier"
+                  placeholder="e.g., Damaged, Expired"
                   required
                 />
               </div>
@@ -699,7 +766,6 @@ const App = () => {
                       value={newProduct.price}
                       onChange={(e) => setNewProduct({...newProduct, price: e.target.value})}
                       className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                      placeholder="0"
                       required
                       min="0"
                       step="0.01"
@@ -712,7 +778,6 @@ const App = () => {
                       value={newProduct.stock}
                       onChange={(e) => setNewProduct({...newProduct, stock: e.target.value})}
                       className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                      placeholder="0"
                       required
                       min="0"
                     />
@@ -724,7 +789,6 @@ const App = () => {
                       value={newProduct.minStock}
                       onChange={(e) => setNewProduct({...newProduct, minStock: e.target.value})}
                       className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                      placeholder="0"
                       required
                       min="0"
                     />
@@ -735,57 +799,108 @@ const App = () => {
                   className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 font-semibold flex items-center justify-center gap-2"
                 >
                   <Plus className="w-5 h-5" />
-                  Add Product
+                  Add Product to Google Sheets
                 </button>
               </form>
             </div>
 
             {/* Products List */}
             <div className="bg-white rounded-lg shadow-md p-6">
-              <h2 className="text-2xl font-bold mb-4">All Products ({products.length})</h2>
-              <div className="space-y-2 max-h-[600px] overflow-y-auto">
-                {products.map(product => (
-                  <div key={product.code} className="border rounded-lg p-3 hover:shadow-md transition">
-                    {editingProductCode === product.code ? (
-                      <form onSubmit={saveEditProduct} className="space-y-2">
-                        <div className="grid grid-cols-2 gap-2">
-                          <input value={editingProduct.name} onChange={(e) => setEditingProduct({...editingProduct, name: e.target.value})} className="px-2 py-1 border rounded" />
-                          <input value={editingProduct.category} onChange={(e) => setEditingProduct({...editingProduct, category: e.target.value})} className="px-2 py-1 border rounded" />
-                        </div>
-                        <div className="grid grid-cols-3 gap-2">
-                          <input type="number" value={editingProduct.price} onChange={(e) => setEditingProduct({...editingProduct, price: e.target.value})} className="px-2 py-1 border rounded" />
-                          <input type="number" value={editingProduct.stock} onChange={(e) => setEditingProduct({...editingProduct, stock: e.target.value})} className="px-2 py-1 border rounded" />
-                          <input type="number" value={editingProduct.minStock} onChange={(e) => setEditingProduct({...editingProduct, minStock: e.target.value})} className="px-2 py-1 border rounded" />
-                        </div>
-                        <div className="flex gap-2">
-                          <button type="submit" className="px-3 py-1 bg-green-600 text-white rounded">Save</button>
-                          <button type="button" onClick={cancelEditProduct} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
-                        </div>
-                      </form>
-                    ) : (
-                      <>
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <h3 className="font-semibold">{product.name}</h3>
-                            <p className="text-sm text-gray-500">{product.code} - {product.category}</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg font-bold text-blue-600">₹{product.price}</span>
-                            <button onClick={() => startEditProduct(product)} className="px-2 py-1 bg-yellow-100 rounded text-sm">Edit</button>
-                          </div>
-                        </div>
-                        <div className="flex justify-between items-center mt-2">
-                          <span className={`text-sm font-medium ${
-                            product.stock <= product.minStock ? 'text-red-600' : 'text-green-600'
-                          }`}>
-                            Stock: {product.stock} (Min: {product.minStock})
-                          </span>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))}
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-2xl font-bold">Products ({products.length})</h2>
+                <button
+                  onClick={refreshData}
+                  className="px-3 py-1 bg-gray-100 rounded hover:bg-gray-200 flex items-center gap-1 text-sm"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Refresh
+                </button>
               </div>
+              
+              {products.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Package className="w-12 h-12 mx-auto mb-2 text-gray-300" />
+                  <p>No products in Google Sheets</p>
+                  <p className="text-sm">Add products using the form or directly in the sheet</p>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[600px] overflow-y-auto">
+                  {products.map(product => (
+                    <div key={product.code} className="border rounded-lg p-3 hover:shadow-md transition">
+                      {editingProductCode === product.code ? (
+                        <form onSubmit={saveEditProduct} className="space-y-2">
+                          <div className="grid grid-cols-2 gap-2">
+                            <input 
+                              value={editingProduct.name} 
+                              onChange={(e) => setEditingProduct({...editingProduct, name: e.target.value})} 
+                              className="px-2 py-1 border rounded" 
+                              placeholder="Name"
+                            />
+                            <input 
+                              value={editingProduct.category} 
+                              onChange={(e) => setEditingProduct({...editingProduct, category: e.target.value})} 
+                              className="px-2 py-1 border rounded" 
+                              placeholder="Category"
+                            />
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <input 
+                              type="number" 
+                              value={editingProduct.price} 
+                              onChange={(e) => setEditingProduct({...editingProduct, price: e.target.value})} 
+                              className="px-2 py-1 border rounded" 
+                              placeholder="Price"
+                            />
+                            <input 
+                              type="number" 
+                              value={editingProduct.stock} 
+                              onChange={(e) => setEditingProduct({...editingProduct, stock: e.target.value})} 
+                              className="px-2 py-1 border rounded" 
+                              placeholder="Stock"
+                            />
+                            <input 
+                              type="number" 
+                              value={editingProduct.minStock} 
+                              onChange={(e) => setEditingProduct({...editingProduct, minStock: e.target.value})} 
+                              className="px-2 py-1 border rounded" 
+                              placeholder="Min"
+                            />
+                          </div>
+                          <div className="flex gap-2">
+                            <button type="submit" className="px-3 py-1 bg-green-600 text-white rounded text-sm">Save</button>
+                            <button type="button" onClick={cancelEditProduct} className="px-3 py-1 bg-gray-200 rounded text-sm">Cancel</button>
+                          </div>
+                        </form>
+                      ) : (
+                        <>
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <h3 className="font-semibold">{product.name}</h3>
+                              <p className="text-sm text-gray-500">{product.code} • {product.category}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg font-bold text-blue-600">₹{product.price}</span>
+                              <button 
+                                onClick={() => startEditProduct(product)} 
+                                className="px-2 py-1 bg-yellow-100 hover:bg-yellow-200 rounded text-sm"
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex justify-between items-center mt-2">
+                            <span className={`text-sm font-medium ${
+                              product.stock <= product.minStock ? 'text-red-600' : 'text-green-600'
+                            }`}>
+                              Stock: {product.stock} (Min: {product.minStock})
+                            </span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -794,103 +909,140 @@ const App = () => {
         {activeTab === 'dashboard' && (
           <div>
             {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-              <div className="bg-white rounded-lg shadow p-4 flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm text-gray-500">Total Products</h3>
-                  <p className="text-2xl font-bold">{totalProducts}</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="bg-white rounded-lg shadow p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-500">Products</p>
+                    <p className="text-2xl font-bold">{totalProducts}</p>
+                  </div>
+                  <Package className="w-8 h-8 text-blue-600" />
                 </div>
-                <Package className="w-8 h-8 text-blue-600" />
               </div>
-              <div className="bg-white rounded-lg shadow p-4 flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm text-gray-500">Total Stock</h3>
-                  <p className="text-2xl font-bold">{totalStock}</p>
+              <div className="bg-white rounded-lg shadow p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-500">Total Stock</p>
+                    <p className="text-2xl font-bold">{totalStock}</p>
+                  </div>
+                  <BarChart3 className="w-8 h-8 text-green-600" />
                 </div>
-                <BarChart3 className="w-8 h-8 text-green-600" />
               </div>
-              <div className="bg-white rounded-lg shadow p-4 flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm text-gray-500">Today's Sales</h3>
-                  <p className="text-2xl font-bold">₹{todaySales}</p>
+              <div className="bg-white rounded-lg shadow p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-500">Today's Sales</p>
+                    <p className="text-2xl font-bold">₹{todaySales}</p>
+                  </div>
+                  <TrendingUp className="w-8 h-8 text-yellow-500" />
                 </div>
-                <TrendingUp className="w-8 h-8 text-yellow-500" />
               </div>
-              <div className="bg-white rounded-lg shadow p-4 flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm text-gray-500">Bills</h3>
-                  <p className="text-2xl font-bold">{bills.length}</p>
+              <div className="bg-white rounded-lg shadow p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-500">Total Bills</p>
+                    <p className="text-2xl font-bold">{bills.length}</p>
+                  </div>
+                  <ShoppingCart className="w-8 h-8 text-indigo-600" />
                 </div>
-                <ShoppingCart className="w-8 h-8 text-indigo-600" />
               </div>
             </div>
 
-            {/* Recent Bills & Actions */}
+            {/* Recent Bills */}
             <div className="bg-white rounded-lg shadow-md p-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-bold">Recent Bills</h2>
                 <div className="flex gap-2">
-                  <button onClick={() => {
-                    const data = JSON.stringify(bills, null, 2);
-                    const blob = new Blob([data], { type: 'application/json' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url; a.download = 'bills.json';
-                    a.click(); URL.revokeObjectURL(url);
-                  }} className="px-3 py-2 bg-gray-100 rounded hover:bg-gray-200 flex items-center gap-1"><Save className="w-4 h-4"/> Save</button>
-                  <button onClick={() => {
-                    // download CSV
-                    if (!bills.length) return;
-                    const rows = bills.map(b => [b.id, b.date, b.total, b.items.map(i => `${i.code}(${i.quantity})`).join(';')]);
-                    const csv = ['ID,Date,Total,Items', ...rows.map(r => r.map(c => `"${c}"`).join(','))].join('\n');
-                    const blob = new Blob([csv], { type: 'text/csv' });
-                    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'bills.csv'; a.click(); URL.revokeObjectURL(url);
-                  }} className="px-3 py-2 bg-gray-100 rounded hover:bg-gray-200 flex items-center gap-1"><Download className="w-4 h-4"/> Download</button>
+                  <button 
+                    onClick={refreshData}
+                    className="px-3 py-2 bg-gray-100 rounded hover:bg-gray-200 flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-4 h-4"/> Refresh
+                  </button>
+                  <button 
+                    onClick={() => {
+                      if (!bills.length) return;
+                      const csv = ['ID,Date,Customer,Phone,Total,Items', 
+                        ...bills.map(b => [
+                          b.id, 
+                          b.date, 
+                          b.customer?.name || '', 
+                          b.customer?.phone || '',
+                          b.total, 
+                          (b.items || []).map(i => `${i.code}(${i.quantity})`).join(';')
+                        ].map(c => `"${c}"`).join(','))
+                      ].join('\n');
+                      const blob = new Blob([csv], { type: 'text/csv' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url; a.download = 'bills.csv'; a.click();
+                      URL.revokeObjectURL(url);
+                    }} 
+                    className="px-3 py-2 bg-gray-100 rounded hover:bg-gray-200 flex items-center gap-1"
+                  >
+                    <Download className="w-4 h-4"/> Export
+                  </button>
                 </div>
               </div>
 
-              <div className="space-y-2">
-                {bills.length === 0 ? (
-                  <p className="text-gray-500">No bills yet — create a bill from the Billing tab.</p>
-                ) : (
-                  bills.map(b => (
+              {bills.length === 0 ? (
+                <p className="text-gray-500 text-center py-8">No bills yet</p>
+              ) : (
+                <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                  {bills.map(b => (
                     <div key={b.id} className="border rounded p-3 flex justify-between items-center">
                       <div>
                         <div className="font-medium">{b.id}</div>
                         <div className="text-sm text-gray-500">{b.date}</div>
+                        {b.customer && (
+                          <div className="text-xs text-gray-400">{b.customer.name} • {b.customer.phone}</div>
+                        )}
                       </div>
                       <div className="text-right">
-                        <div className="font-bold">₹{b.total}</div>
-                        <div className="text-xs text-gray-500">{b.items.length} items</div>
+                        <div className="font-bold text-lg">₹{b.total}</div>
+                        <div className="text-xs text-gray-500">{(b.items || []).length} items</div>
                       </div>
                     </div>
-                  ))
-                )}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
+
+            {/* Low Stock Alert */}
             {lowStockItems.length > 0 && (
               <div className="bg-white rounded-lg shadow-md p-6 mt-4">
-                <h3 className="text-lg font-bold mb-3">Low Stock Items</h3>
+                <h3 className="text-lg font-bold mb-3 flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-yellow-500" />
+                  Low Stock Items
+                </h3>
                 <div className="space-y-2">
                   {lowStockItems.map(item => (
-                    <div key={item.code} className="flex justify-between items-center border p-2 rounded">
+                    <div key={item.code} className="flex justify-between items-center border p-3 rounded">
                       <div>
-                        <div className="font-medium">{item.name} ({item.code})</div>
-                        <div className="text-sm text-gray-500">Stock: {item.stock} (Min: {item.minStock})</div>
+                        <div className="font-medium">{item.name}</div>
+                        <div className="text-sm text-gray-500">
+                          Code: {item.code} • Stock: {item.stock} (Min: {item.minStock})
+                        </div>
                       </div>
-                      <div className="flex gap-2">
-                        <button onClick={() => { setActiveTab('stockIn'); setStockForm({ ...stockForm, productCode: item.code, quantity: '' }); }} className="px-3 py-2 bg-blue-600 text-white rounded">Reorder</button>
-                      </div>
+                      <button 
+                        onClick={() => { 
+                          setActiveTab('stockIn'); 
+                          setStockForm({ ...stockForm, productCode: item.code, quantity: '', type: 'in' }); 
+                        }} 
+                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                      >
+                        Restock
+                      </button>
                     </div>
                   ))}
                 </div>
               </div>
             )}
           </div>
-        )} {/* end dashboard */}
+        )}
       </div>
     </div>
   );
-}
+};
 
 export default App;
