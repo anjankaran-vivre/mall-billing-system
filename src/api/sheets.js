@@ -1,127 +1,93 @@
-  const BASE = import.meta.env.VITE_SHEETS_API || '';
-  const IS_APPS_SCRIPT = BASE.includes('script.google.com');
+// src/api/sheets.js — FIXED VERSION
+const BASE = import.meta.env.VITE_SHEETS_API || '';
+const IS_APPS_SCRIPT = BASE.includes('script.google.com');
 
-  async function fetchJSON(pathOrAction, opts = {}) {
-    if (!BASE) {
-      throw new Error('SHEETS_API_NOT_CONFIGURED');
-    }
-    const baseStripped = BASE.replace(/\/$/, '');
-    let url = '';
-    if (IS_APPS_SCRIPT) {
-      // map path like '/products' to action=products, or pass through if already an action
-      if (pathOrAction.startsWith('/')) {
-        const action = pathOrAction.replace(/^\//, '');
-        url = `${baseStripped}?action=${encodeURIComponent(action)}`;
-      } else if (pathOrAction.startsWith('?') || pathOrAction.includes('action=')) {
-        url = `${baseStripped}${pathOrAction}`;
-      } else {
-        url = `${baseStripped}?action=${encodeURIComponent(pathOrAction)}`;
-      }
-    } else {
+async function fetchJSON(pathOrAction, opts = {}) {
+  if (!BASE) throw new Error('SHEETS_API_NOT_CONFIGURED');
+  
+  const baseStripped = BASE.replace(/\/$/, '');
+  let url = '';
+  
+  if (IS_APPS_SCRIPT) {
+    if (pathOrAction.startsWith('/')) {
+      const action = pathOrAction.replace(/^\//, '');
+      url = `${baseStripped}?action=${encodeURIComponent(action)}`;
+    } else if (pathOrAction.startsWith('?') || pathOrAction.includes('action=')) {
       url = `${baseStripped}${pathOrAction}`;
+    } else {
+      url = `${baseStripped}?action=${encodeURIComponent(pathOrAction)}`;
     }
-    const res = await fetch(url, opts);
-    if (!res.ok) throw new Error(`Error ${res.status}`);
-    return res.json();
+  } else {
+    url = `${baseStripped}${pathOrAction}`;
   }
 
-  function readLocalProducts() {
-    try {
-      const raw = localStorage.getItem('products');
-      return raw ? JSON.parse(raw) : null;
-    } catch (e) { return null; }
-  }
+  // CRITICAL FIX: Apps Script needs redirect: 'follow'
+  const fetchOptions = {
+    ...opts,
+    redirect: 'follow',  // ← This is crucial for Apps Script POST
+  };
 
-  function writeLocalProducts(list) {
-    localStorage.setItem('products', JSON.stringify(list));
-  }
+  console.log('Fetching:', url, fetchOptions); // Debug log
 
-  function readLocalBills() {
-    try { return JSON.parse(localStorage.getItem('bills') || '[]'); } catch (e) { return []; }
+  const res = await fetch(url, fetchOptions);
+  
+  if (!res.ok) {
+    const text = await res.text();
+    console.error('Fetch error:', res.status, text);
+    throw new Error(`Error ${res.status}: ${text}`);
   }
+  
+  const data = await res.json();
+  console.log('Response:', data); // Debug log
+  return data;
+}
 
-  function writeLocalBills(list) { localStorage.setItem('bills', JSON.stringify(list)); }
+// GET requests
+export async function getProducts() { 
+  return fetchJSON('products'); 
+}
 
-  export async function getProducts() {
-    if (!BASE) return readLocalProducts();
-    if (IS_APPS_SCRIPT) return fetchJSON('products');
-    return fetchJSON('/products');
-  }
+export async function getProductByCode(code) { 
+  return fetchJSON(`?action=product&code=${encodeURIComponent(code)}`); 
+}
 
-  export async function getProductByCode(code) {
-    if (!BASE) {
-      const products = readLocalProducts() || [];
-      return products.find(p => p.code === String(code) || p.name === String(code));
-    }
-    if (IS_APPS_SCRIPT) return fetchJSON(`?action=product&code=${encodeURIComponent(code)}`);
-    return fetchJSON(`/product/${encodeURIComponent(code)}`);
-  }
+export async function getBills() { 
+  return fetchJSON('bills'); 
+}
 
-  export async function addProduct(product) {
-    if (!BASE) {
-      const products = readLocalProducts() || [];
-      products.push(product);
-      writeLocalProducts(products);
-      return product;
-    }
-    if (IS_APPS_SCRIPT) return fetchJSON('?action=product', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(product) });
-    return fetchJSON('/product', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(product) });
-  }
+// POST requests
+export async function addProduct(product) { 
+  return fetchJSON('?action=product', { 
+    method: 'POST', 
+    headers: { 'Content-Type': 'application/json' }, 
+    body: JSON.stringify(product),
+    mode: 'cors', // ← Add this
+  }); 
+}
 
-  export async function updateStock(code, newStock) {
-    if (!BASE) {
-      const products = readLocalProducts() || [];
-      const updated = products.map(p => p.code === code ? { ...p, stock: newStock } : p);
-      writeLocalProducts(updated);
-      return updated.find(p => p.code === code);
-    }
-    if (IS_APPS_SCRIPT) return fetchJSON(`?action=productUpdate&code=${encodeURIComponent(code)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stock: newStock }) });
-    return fetchJSON(`/stock/${encodeURIComponent(code)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stock: newStock }) });
-  }
+export async function updateProduct(code, payload) { 
+  return fetchJSON(`?action=productUpdate&code=${encodeURIComponent(code)}`, { 
+    method: 'POST', 
+    headers: { 'Content-Type': 'application/json' }, 
+    body: JSON.stringify(payload),
+    mode: 'cors', // ← Add this
+  }); 
+}
 
-  export async function adjustStock(code, change) {
-    if (!BASE) {
-      const products = readLocalProducts() || [];
-      const updated = products.map(p => p.code === code ? { ...p, stock: Math.max(0, p.stock + change) } : p);
-      writeLocalProducts(updated);
-      return updated.find(p => p.code === code);
-    }
-    if (IS_APPS_SCRIPT) return fetchJSON(`?action=adjustStock&code=${encodeURIComponent(code)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ change }) });
-    return fetchJSON(`/stock/adjust/${encodeURIComponent(code)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ change }) });
-  }
+export async function adjustStock(code, change) { 
+  return fetchJSON(`?action=adjustStock&code=${encodeURIComponent(code)}`, { 
+    method: 'POST', 
+    headers: { 'Content-Type': 'application/json' }, 
+    body: JSON.stringify({ change }),
+    mode: 'cors', // ← Add this
+  }); 
+}
 
-  export async function createBill(bill) {
-    if (!BASE) {
-      const bills = readLocalBills();
-      bills.unshift(bill);
-      writeLocalBills(bills);
-      // adjust local products
-      const products = readLocalProducts() || [];
-      const updated = products.map(p => {
-        const found = (bill.items || []).find(i => i.code === p.code);
-        if (found) return { ...p, stock: Math.max(0, p.stock - found.quantity) };
-        return p;
-      });
-      writeLocalProducts(updated);
-      return bill;
-    }
-    if (IS_APPS_SCRIPT) return fetchJSON('?action=bill', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bill) });
-    return fetchJSON('/bill', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bill) });
-  }
-
-  export async function updateProduct(code, payload) {
-    if (!BASE) {
-      const products = readLocalProducts() || [];
-      const updated = products.map(p => p.code === code ? { ...p, ...payload } : p);
-      writeLocalProducts(updated);
-      return updated.find(p => p.code === code);
-    }
-    if (IS_APPS_SCRIPT) return fetchJSON(`?action=productUpdate&code=${encodeURIComponent(code)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    return fetchJSON(`/product/${encodeURIComponent(code)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  }
-
-  export async function getBills() {
-    if (!BASE) return readLocalBills();
-    if (IS_APPS_SCRIPT) return fetchJSON('bills');
-    return fetchJSON('/bills');
-  }
+export async function createBill(bill) { 
+  return fetchJSON('?action=bill', { 
+    method: 'POST', 
+    headers: { 'Content-Type': 'application/json' }, 
+    body: JSON.stringify(bill),
+    mode: 'cors', // ← Add this
+  }); 
+}
